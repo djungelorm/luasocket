@@ -74,6 +74,9 @@ static t_opt optset[] = {
     {"dontroute",            opt_set_dontroute},
     {"broadcast",            opt_set_broadcast},
     {"reuseaddr",            opt_set_reuseaddr},
+#ifdef SO_EXCLUSIVEADDRUSE
+    {"exclusiveaddruse", opt_set_exclusiveaddruse},
+#endif
     {"reuseport",            opt_set_reuseport},
     {"ip-multicast-if",      opt_set_ip_multicast_if},
     {"ip-multicast-ttl",     opt_set_ip_multicast_ttl},
@@ -96,6 +99,9 @@ static t_opt optget[] = {
     {"dontroute",            opt_get_dontroute},
     {"broadcast",            opt_get_broadcast},
     {"reuseaddr",            opt_get_reuseaddr},
+#ifdef SO_EXCLUSIVEADDRUSE
+    {"exclusiveaddruse", opt_get_exclusiveaddruse},
+#endif
     {"reuseport",            opt_get_reuseport},
     {"ip-multicast-if",      opt_get_ip_multicast_if},
     {"ip-multicast-loop",    opt_get_ip_multicast_loop},
@@ -277,6 +283,7 @@ static int meth_receivefrom(lua_State *L) {
         lua_pushliteral(L, "out of memory");
         return 2;
     }
+    memset(&addr, 0, sizeof(addr));
     err = socket_recvfrom(&udp->sock, dgram, wanted, &got, (SA *) &addr,
             &addr_len, tm);
     /* Unlike TCP, recv() of zero is not closed, but a zero-length packet. */
@@ -285,6 +292,17 @@ static int meth_receivefrom(lua_State *L) {
         lua_pushstring(L, udp_strerror(err));
         if (wanted > sizeof(buf)) free(dgram);
         return 2;
+    }
+    /* a zero-length request may be satisfied by some kernels (notably
+     * Darwin/BSD) without ever touching the sender's address -- only
+     * resolve it when the OS actually reported one, instead of feeding
+     * getnameinfo() a garbage/zeroed sockaddr. */
+    if (addr.ss_family != AF_INET && addr.ss_family != AF_INET6) {
+        lua_pushlstring(L, dgram, got);
+        lua_pushnil(L);
+        lua_pushnil(L);
+        if (wanted > sizeof(buf)) free(dgram);
+        return 3;
     }
     err = getnameinfo((struct sockaddr *)&addr, addr_len, addrstr,
         INET6_ADDRSTRLEN, portstr, 6, NI_NUMERICHOST | NI_NUMERICSERV);
